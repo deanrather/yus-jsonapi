@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "description": "JSON API implementation using Bookshelf models",
   "main": "yus-jsonapi.js",
-  "dependencies": {},
+  "dependencies": {
+    "lodash": "^3.10.1"
+  },
   "devDependencies": {},
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
