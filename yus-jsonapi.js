@@ -45,6 +45,7 @@ function isRelationshipsEndpoint(req)
 
 // http://jsonapi.org/format/#document-resource-identifier-objects
 function getResourceIdentifierObject(model) {
+  
   return {
     type: model.constructor.type + 's', //TODO: temporary fix as angular-jsonapi library is not happy with singular types.  https://github.com/jakubrohleder/angular-jsonapi/issues/28
     id: model.attributes.id
@@ -127,6 +128,8 @@ function gatherIncludesForEach(models, includes)
 
 function gatherIncludes(model, includes)
 {
+  // if(!model) return includes;
+  
   // Get the resource object
   var resourceObject = getResourceObject(model);
   
@@ -143,6 +146,11 @@ function gatherIncludes(model, includes)
   _.forEach(model.relations, function(relationship, relationshipName){
     if(relationshipIsToOne(relationship))
     {
+      if(!relationship.model)
+      {
+        console.error("model does not have related [" + relationshipName + "] model.");
+        return includes;
+      }
       includes = gatherIncludes(relationship.model, includes);
     }
     else
@@ -172,7 +180,19 @@ function omitPrimaryFromIncludes(primaryData, includes)
   return newIncludes;
 }
 
-
+function makeErrorObject(error) {
+  var errorObject = {};
+  errorObject.id = 1;
+  errorObject.links = {
+    docs: 'todo-docs-url',
+    support: 'todo-support-url'
+  };
+  errorObject.status = 501;
+  errorObject.code = error.name;
+  // errorObject.title = error.message;
+  errorObject.details = error.stack.split("\n");
+  return errorObject;
+}
 
 
 
@@ -203,6 +223,14 @@ function toJSONAPI(req, res, next) {
     res.json(model.toJSON());
   }
   
+  
+  // Top-level document
+  // http://jsonapi.org/format/#document-top-level
+  var topLevelDocument = {};
+  var primaryData = null;
+  var includes = [];
+  var errors = [];
+  
   // Primary Data object
   /*
    * http://jsonapi.org/format/#document-top-level
@@ -211,52 +239,56 @@ function toJSONAPI(req, res, next) {
    * - a single resource object, a single resource identifier object, or null, for requests that target single resources
    * - an array of resource objects, an array of resource identifier objects, or an empty array ([]), for requests that target resource collections
    */
-  var primaryData = null;
-  var includes = [];
-  if(model.models) // There's multiple resources in the result listing. eg /channels, /channels/4/schedules, /channels/4/relationships/schedules
-  {
-    if(isRelationshipsEndpoint(req))
+  try{
+    if(model.models) // There's multiple resources in the result listing. eg /channels, /channels/4/schedules, /channels/4/relationships/schedules
     {
-      primaryData = getResourceIdentifierObjects(model.models);
+      if(isRelationshipsEndpoint(req))
+      {
+        primaryData = getResourceIdentifierObjects(model.models);
+      }
+      else
+      {
+        primaryData = getResourceObjects(model.models);
+        includes = gatherIncludesForEach(model.models, includes);
+      }
     }
-    else
+    else // there's only one resource in the result listing. eg /channels/4, /locations/5/timezone, channels/4?include=schedules
     {
-      primaryData = getResourceObjects(model.models);
-      includes = gatherIncludesForEach(model.models, includes);
+      if(isRelationshipsEndpoint(req))
+      {
+        primaryData = getResourceIdentifierObject(model);
+      }
+      else
+      {
+        primaryData = getResourceObject(model);
+        includes = gatherIncludes(model, includes);
+      }
     }
+    includes = omitPrimaryFromIncludes(primaryData, includes);
   }
-  else // there's only one resource in the result listing. eg /channels/4, /locations/5/timezone, channels/4?include=schedules
+  catch (error) {
+    error = makeErrorObject(error);
+    errors.push(error);
+  }
+  
+  if(errors.length)
   {
-    if(isRelationshipsEndpoint(req))
-    {
-      primaryData = getResourceIdentifierObject(model);
-    }
-    else
-    {
-      primaryData = getResourceObject(model);
-      includes = gatherIncludes(model, includes);
+    topLevelDocument.errors = errors;
+  }
+  else
+  {
+    topLevelDocument.data = primaryData;
+    if(req.query.include) {
+      topLevelDocument.included = includes;
     }
   }
   
-  includes = omitPrimaryFromIncludes(primaryData, includes);
-  
-  // Top-level document
-  // http://jsonapi.org/format/#document-top-level
-  var topLevelDocument = {};
-  topLevelDocument.data = primaryData;
-  if(req.query.include) {
-    topLevelDocument.included = includes;
-  }
   topLevelDocument.links = {self: getBaseUrl() + req.url};
-  
   
   // Modify Response object & call next function
   res.jsonapi = topLevelDocument;
   next();
 }
-
-
-
 
 
 
